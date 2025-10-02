@@ -1,0 +1,4 @@
+{
+  "/prediction/page": "app/prediction/page.js",
+  "/api/sentinel-token/route": "app/api/sentinel-token/route.js"
+}

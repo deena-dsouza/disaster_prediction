@@ -50,7 +50,8 @@ export default function WeatherCard({
   ];
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg p-6 grid grid-cols-2 gap-6 hover:shadow-xl transition">
+    
+    <div className="bg-white rounded-2xl shadow-lg p-6 grid grid-cols-2 gap-6 hover:shadow-xl transition max-w-md mx-auto">
       {stats.map((stat) => {
         const Icon = stat.icon;
         return (
