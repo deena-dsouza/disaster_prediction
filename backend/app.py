@@ -133,13 +133,15 @@ except Exception as e:
     print(f"Error loading Flood LSTM model: {e}")
 
 try:
-    landslide_lstm_model = tf.keras.models.load_model("backend/models/lstm_landslide_predictor.keras", compile=False)
+    #landslide_lstm_model = tf.keras.models.load_model("backend/models/lstm_landslide_predictor.keras", compile=False)
+    landslide_lstm_model = tf.keras.models.load_model("backend/models/landslide_lstm_small.keras", compile=False)
     print("Loaded TF Landslide LSTM model.")
 except Exception as e:
     print(f"Error loading landslide LSTM model: {e}")
 
 try:
-    landslide_preprocessor = joblib.load("backend/models/landslide_preprocessor.joblib")
+    #landslide_preprocessor = joblib.load("backend/models/landslide_preprocessor.joblib")
+    landslide_preprocessor = joblib.load("backend/models/landslide_preprocessor (1).joblib")
     print("Loaded Landslide Preprocessor.")
 except Exception as e:
     print(f"Error loading landslide preprocessor: {e}")
@@ -207,40 +209,77 @@ def make_flood_lstm_input(req: FloodRequest, preprocessor: ColumnTransformer, ls
 
 
 def make_landslide_lstm_input(req: LandslideRequest, geo_features: dict, prev_landslide_status: int, preprocessor: ColumnTransformer, lstm_model: tf.keras.Model):
-    """
-    Creates the 3D LSTM input for the Landslide model.
-    """
+
     if preprocessor is None:
         raise HTTPException(status_code=500, detail="Landslide Preprocessor not loaded.")
 
-    seq_len = lstm_model.input_shape[1] 
-    
+    seq_len = lstm_model.input_shape[1]
+    expected_feature_dim = None
+    # Try to read expected input dim from the model (fallback safe route)
+    try:
+        expected_feature_dim = int(lstm_model.input_shape[2])
+    except Exception:
+        expected_feature_dim = None
+
     single_day_data = {
-        # --- CRITICAL FIX: Bias and use live T/H/R ---
-        'Rainfall_mm': req.rainfall + 0.001, 
-        'Temperature_C': req.temperature, 
-        'Humidity_%': req.humidity, 
-        
-        # --- DYNAMICALLY FETCHED FEATURES ---
+        'Rainfall_mm': req.rainfall + 0.001,
+        'Temperature_C': req.temperature,
+        'Humidity_%': req.humidity,
         'Previous_Landslide': prev_landslide_status,
         'Latitude': req.latitude,
         'Longitude': req.longitude,
-        'Region': FORCED_REGION, 
-        
-        # --- DYNAMICALLY FETCHED GEO FEATURES (Slope, Elevation, etc.) ---
-        **geo_features 
+        'Region': FORCED_REGION,
+        **geo_features
     }
-    
-    input_df = pd.DataFrame([single_day_data])
-    
-    # CRITICAL FIX: Use the correct LANDSLIDE feature lists
-    input_df = input_df[LANDSLIDE_NUMERICAL_COLS + LANDSLIDE_CATEGORICAL_COLS]
-    
-    processed_data = preprocessor.transform(input_df)
 
-    lstm_sequence = np.tile(processed_data, (seq_len, 1))
-    
-    return lstm_sequence.reshape(1, seq_len, processed_data.shape[1]).astype(np.float32)
+    input_df = pd.DataFrame([single_day_data])
+    input_df = input_df[LANDSLIDE_NUMERICAL_COLS + LANDSLIDE_CATEGORICAL_COLS]
+
+    # ---------------------------------------------------------
+    # 🔥 HOTFIX: Add missing columns expected by the preprocessor
+    # ---------------------------------------------------------
+    expected_cols = set(preprocessor.feature_names_in_)
+
+    if "Date" in expected_cols and "Date" not in input_df.columns:
+        input_df["Date"] = "2024-01-01"
+
+    if "Landslide_Probability_%" in expected_cols and "Landslide_Probability_%" not in input_df.columns:
+        input_df["Landslide_Probability_%"] = 0.0
+    # ---------------------------------------------------------
+
+    # Transform with the preprocessor
+    processed_data = preprocessor.transform(input_df)  # shape: (1, processed_dim)
+    # Ensure it's a NumPy array (if transformer returns DataFrame)
+    if hasattr(processed_data, "toarray"):
+        # In case of sparse output
+        processed_data = processed_data.toarray()
+    processed_data = np.asarray(processed_data).reshape(1, -1)  # (1, processed_dim)
+    processed_dim = processed_data.shape[1]
+
+    # If we can't determine expected_feature_dim from model, just use processed_dim
+    if expected_feature_dim is None:
+        expected_feature_dim = processed_dim
+
+    # ----------------------------------------------------------------
+    # Align processed features to the model's expected feature dimension
+    # ----------------------------------------------------------------
+    if processed_dim > expected_feature_dim:
+        # Trim extra columns (temporary hack)
+        # Log a warning to console so you know trimming happened
+        print(f"Warning: processed_dim ({processed_dim}) > expected ({expected_feature_dim}). Trimming extra features.")
+        processed_data = processed_data[:, :expected_feature_dim]
+
+    elif processed_dim < expected_feature_dim:
+        # Pad with zeros (temporary hack)
+        pad_width = expected_feature_dim - processed_dim
+        print(f"Warning: processed_dim ({processed_dim}) < expected ({expected_feature_dim}). Padding with {pad_width} zeros.")
+        pad_array = np.zeros((1, pad_width), dtype=processed_data.dtype)
+        processed_data = np.concatenate([processed_data, pad_array], axis=1)
+
+    # Now processed_data has shape (1, expected_feature_dim)
+    # Tile into sequence length and return shaped array
+    lstm_sequence = np.tile(processed_data, (seq_len, 1))  # (seq_len, expected_feature_dim)
+    return lstm_sequence.reshape(1, seq_len, expected_feature_dim).astype(np.float32)
 
 
 # =======================
