@@ -271,17 +271,16 @@ export default function PredictionPage() {
       )}
 
       {isLandslideResult(predictionResult) && (
-        <p className="text-lg font-semibold">
-          Risk Category:{" "}
-          <span
-            className={`font-normal ${
-              predictionResult.future_prediction_binary === 1 ? "text-red-700" : "text-green-700"
-            }`}
-          >
-            {predictionResult.future_prediction_binary === 1 ? "HIGH RISK" : "LOW RISK"}
-          </span>
-        </p>
-      )}
+  <p className="text-lg font-semibold">
+    Risk Category:{" "}
+    <span
+      className={`font-normal ${getRiskLevel(predictionResult["future_prediction_probability_%"]).color}`}
+    >
+      {getRiskLevel(predictionResult["future_prediction_probability_%"]).level}
+    </span>
+  </p>
+)}
+
     </div>
   </div>
 )}
